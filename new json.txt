@@ -1,0 +1,59 @@
+{
+	"user_id": NULL,
+	"user_name": NULL,
+	"user_spy": NULL,
+	"user_spy_timestamp": NULL,
+	"sabtotal": NULL,
+	
+	"options": {
+		"realtime": "realtime time indicators" boolean,
+		"unlisted": "keep track of people sabbed not on" boolean,
+		"unlisted_length": "hours to keept hem unlisted" numeric,
+		"notif": "get onscreen notifications" boolean,
+		"notif_delay": "remove notifactions after a time" boolean,
+		"notif_delay_amount": "seconds to wait before removing notificaiton" numeric,
+		"notif_batch": "batch notifications" boolean,
+		"notif_style": ["text color", "background color"] text,
+		"notif_location": "location of notification box"
+		"datashare": "Opt into sharing intel for gloamer" boolean
+	},
+	
+	"sab_data": {
+		"target_id": {
+			"name": "content",
+			"alliance": "targets alliance" text,
+			"warlist": "are they on the alliances warlist" boolean,
+			"sablist": "are they on the users personal sab list" boolean,
+			"target_sentry": "targets sentry" numeric,
+			"focus": "suggested sab weapon" text,
+			
+			"log_info": {
+				"log_id": {"active": boolean_value, "timestamp": timestamp_data,},
+				"log_id": {data here}
+			}
+	}
+}
+	
+	outcome
+	lose
+	sentries_killed
+	sentries_lost
+	spies_killed
+	spies_lost
+	spies_sent
+	spoils_gold
+	spoils_xp
+	target_focus
+	target_focus_qty
+	target_focus_remaining
+	target_id
+	target_name
+	target_id
+	
+	attempts_sab
+	attempts_sab_true
+	spies
+	spy_cap
+	value_invested
+	value_lost
+	value_sab_cap
