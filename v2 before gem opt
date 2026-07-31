@@ -1,0 +1,348 @@
+// ==UserScript==
+// @name         NTA sabscript local version
+// @namespace    https://www.kingsofchaos.com/
+// @version      3.11
+// @description  Reads KoC player/target stats and logs them.
+// @author       ChatGPT
+// @match        https://www.kingsofchaos.com/*
+// @grant        none
+// ==/UserScript==
+
+(function () {
+    'use strict';
+
+    const lookupTables = {
+        siege: { "None": 0, "Flaming Arrows": 1, "Ballistas": 2, "Battering Ram": 3, "Ladders": 4, "Trojan Horse": 5, "Catapults": 6, "War Elephants": 7, "Siege Towers": 8, "Trebuchets": 9, "Black Powder": 10, "Sappers": 11, "Dynamite": 12, "Greek Fire": 13, "Cannons": 14, "Great Horn": 15, "Fists of Thor": 16, "Ringwraiths": 17, "Saurons Ring": 18, "Morgoth": 19 },
+        fortification: { "Camp": 0, "Stockade": 1, "Rabid Pitbulls": 2, "Walled Town": 3, "Towers": 4, "Battlements": 5, "Portcullis": 6, "Boiling Oil": 7, "Trenches": 8, "Moat": 9, "Drawbridge": 10, "Fortress": 11, "Stronghold": 12, "Palace": 13, "Keep": 14, "Citadel": 15, "Hand of God": 16, "Gates of Hell": 17, "Titans Shield": 18, "Hancock": 19 },
+        economy: { "None": 0, "Hunting": 1, "Farming": 2, "Fishing": 3, "Mining": 4, "Construction": 5, "SpiceTrade": 6, "Feudal": 7, "Trade": 8, "Exploration": 9, "Masonry": 10, "Imperial": 11, "Urbanization": 12, "Mercantile": 13, "PortTrade": 14, "Plantation": 15, "Manufacturing": 16, "Industrial": 17 },
+        technology: { "None": 0, "Spear": 1, "Fire": 2, "Oven": 3, "Pottery": 4, "Domestication": 5, "Copper": 6, "Wheel": 7, "Writing": 8, "Bronze": 9, "Irrigation": 10, "Woodworking": 11, "Archery": 12, "Salt": 13, "Sailing": 14, "Masonry": 15, "Forum": 16, "Furnace": 17, "Ironworking": 18, "Library": 19, "Medicine": 20, "Timekeeping": 21, "Market": 22, "Monastery": 23, "Windmill": 24, "Printing": 25, "Civil Code": 26, "Shipbuilding": 27, "Astronomy": 28, "Chemistry": 29, "Gunpowder": 30, "Economics": 31, "Cotton Gin": 32, "Ballistics": 33, "Metallurgy": 34, "Laboratory": 35, "Mechanics": 36, "Textiles": 37, "Thermodynamics": 38, "Steam Engine": 39, "Assembly Line": 40, "Electricity": 41, "Cooking": 42, "Obi Bon Kenobi": 43 }
+    };
+
+
+    const statsToTrack = {
+        spy: ["spy", "spy rating"],
+        strike: ["strike", "strike action"],
+        defense: ["defense", "defensive action"],
+        sentry: ["sentry", "sentry rating"],
+        poison: ["poison", "poison rating"],
+        antidote: ["antidote", "antidote rating"],
+        theft: ["theft", "theft rating"],
+        vigilance: ["vigilance", "vigilance rating"],
+        spy_lvl: ["covert", "covert level", "covert skill"],
+        sentry_lvl: ["sentry skill", "sentry level"],
+        poison_lvl: ["toxic infusion level", "poison level"],
+        antidote_lvl: ["antidote level", "viperbane vigilance level"],
+        theft_lvl: ["theft level", "shadowmeld level"],
+        vigilance_lvl: ["vigilance level", "sentinel vigil level"],
+        spies: ["spies", "covert spies"],
+        sentries: ["sentries"],
+        vweavers: ["venomweavers"],
+        swardens: ["serpentwardens"],
+        thieves: ["thieves"],
+        rangers: ["rangers"],
+        tech: ["technology"]
+    };
+
+
+    // NEW: reverse lookup table
+    const statLookup = {};
+
+    for (const key in statsToTrack) {
+        for (const label of statsToTrack[key]) {
+            statLookup[label] = key;
+        }
+    }
+
+
+    function cleanName(name) {
+        return name.trim().replace(/'s$/, "");
+    }
+
+
+    function extractId(url) {
+        const match = url.match(/stats\.php\?id=(\d+)/);
+        return match ? Number(match[1]) : null;
+    }
+
+
+    function normalizeValue(value) {
+        value = value.trim();
+
+        if (value === "??" || value === "???") {
+            return null;
+        }
+
+        return Number(value.replace(/,/g, ""));
+    }
+
+
+    function getServerTimestamp() {
+        const ths = document.querySelectorAll("th");
+
+        for (const th of ths) {
+            if (th.textContent.trim().toLowerCase() === "server time") {
+
+                const table = th.closest("table");
+
+                if (!table) return null;
+
+                let next = table.nextElementSibling;
+
+                while (next) {
+                    if (next.tagName === "TABLE") {
+
+                        const timestamp = next.querySelector("th");
+
+                        if (timestamp) {
+                            return timestamp.textContent.trim();
+                        }
+                    }
+
+                    next = next.nextElementSibling;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    function getPlayerInfo(prefix) {
+
+        let name = null;
+        let id = null;
+        let reportId = null;
+
+        const path = window.location.pathname.toLowerCase();
+
+
+        // inteldetail.php and attack.php use stats.php?id links
+        if (
+            path.includes("inteldetail.php") ||
+            path.includes("attack.php")
+        ) {
+
+            const links = document.querySelectorAll("a[href*='stats.php?id=']");
+
+            for (const link of links) {
+
+                const linkId = extractId(link.href);
+
+                if (linkId) {
+                    name = cleanName(link.textContent);
+                    id = linkId;
+                    break;
+                }
+            }
+
+
+            if (path.includes("inteldetail.php")) {
+
+                const reportMatch = window.location.href.match(/report_id=(\d+)/);
+
+                if (reportMatch) {
+                    reportId = Number(reportMatch[1]);
+                }
+            }
+
+
+        } else {
+
+            // Normal pages use Name field
+            const rows = document.querySelectorAll("tr");
+
+            for (const row of rows) {
+
+                const cells = row.querySelectorAll("td");
+
+                if (cells.length < 2) continue;
+
+                const label = cells[0].textContent
+                    .trim()
+                    .toLowerCase()
+                    .replace(":", "");
+
+
+                if (label !== "name") continue;
+
+
+                const valueCell = cells[1];
+
+                const link = valueCell.querySelector("a");
+
+
+                if (link) {
+
+                    name = cleanName(link.textContent);
+                    id = extractId(link.href);
+
+
+                } else {
+
+                    name = cleanName(valueCell.textContent);
+
+                }
+
+                break;
+            }
+
+
+            if (!id) {
+                id = extractId(window.location.href);
+            }
+        }
+
+
+        const output = {};
+
+
+        if (name) {
+            output[`${prefix}_name`] = name;
+        }
+
+
+        if (id) {
+            output[`${prefix}_id`] = id;
+        }
+
+
+        if (reportId) {
+            output[`${prefix}_report_id`] = reportId;
+        }
+
+
+        return output;
+    }
+
+
+
+    function extractStats() {
+
+        const path = window.location.pathname.toLowerCase();
+
+
+        const isTarget =
+            path.includes("stats.php") ||
+            path.includes("inteldetail.php") ||
+            path.includes("attack.php");
+
+
+        const prefix = isTarget ? "target" : "user";
+
+
+        const output = {};
+
+
+        Object.assign(output, getPlayerInfo(prefix));
+
+
+        const rows = document.querySelectorAll("tr");
+
+
+        for (const row of rows) {
+
+            const cells = row.querySelectorAll("td");
+
+
+            if (cells.length !== 2 && cells.length !== 3) continue;
+
+
+            const label = cells[0].textContent
+                .trim()
+                .toLowerCase()
+                .replace(":", "");
+
+
+            // NEW: direct lookup instead of looping
+            const statKey = statLookup[label];
+
+
+            if (!statKey) continue;
+
+
+            if (output[`${prefix}_${statKey}`] !== undefined) {
+                continue;
+            }
+
+
+            let value;
+
+
+            if (statKey === "tech") {
+
+                value = lookupTables.technology[
+                    cells[1].textContent.trim()
+                ];
+
+
+                if (value === undefined) {
+                    continue;
+                }
+
+
+            } else {
+
+                value = normalizeValue(cells[1].textContent);
+
+
+                if (value === null) {
+                    continue;
+                }
+            }
+
+
+            let timestamp = null;
+
+
+            if (cells.length === 3) {
+
+                if (
+                    label.includes("rating") ||
+                    label.includes("action")
+                ) {
+
+                    timestamp = cells[2].textContent.trim();
+
+
+                    if (!timestamp) {
+                        timestamp = getServerTimestamp();
+                    }
+
+
+                } else {
+
+                    timestamp = getServerTimestamp();
+
+                }
+
+
+            } else {
+
+                timestamp = getServerTimestamp();
+
+            }
+
+
+            output[`${prefix}_${statKey}`] = value;
+            output[`${prefix}_${statKey}_timestamp`] = timestamp || null;
+        }
+
+
+        console.log(output);
+    }
+
+
+
+    if (document.readyState === "loading") {
+
+        document.addEventListener(
+            "DOMContentLoaded",
+            extractStats
+        );
+
+    } else {
+
+        extractStats();
+
+    }
+
+})();
