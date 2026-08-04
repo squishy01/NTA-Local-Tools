@@ -3,7 +3,7 @@
 // @namespace    https://www.kingsofchaos.com/
 // @version      1.0
 // @description  Tracks and displays KoC player wealth values.
-// @match        https://www.kingsofchaos.com/attack.php?id=*
+// @match        https://www.kingsofchaos.com/*
 // @grant        none
 // ==/UserScript==
 
@@ -1322,12 +1322,19 @@
 
 
     // ==================================================
-    // START
-    // ==================================================
+// START
+// ==================================================
 
+// Only collect wealth data from attack pages
+if (
+    window.location.pathname.includes("/attack.php") &&
+    window.location.search.includes("id=")
+) {
     trackTarget();
+}
 
-    createButton();
+// Always allow viewer access
+createButton();
 
 
 
