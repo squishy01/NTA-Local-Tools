@@ -1,470 +1,263 @@
 // ==UserScript==
 // @name         NTA Local Tools - Value Tracker
 // @namespace    https://www.kingsofchaos.com/
-// @version      1.0
+// @version      1.1.1
 // @description  Tracks and displays KoC player wealth values.
 // @match        https://www.kingsofchaos.com/*
-// @grant        none
+// @grant        GM_xmlhttpRequest
+// @connect      raw.githubusercontent.com
 // ==/UserScript==
 
 (function () {
     'use strict';
 
+    // ==================================================
+    // CONFIGURATION & UPDATE LINKS
+    // ==================================================
+    const SCRIPT_VERSION = "1.0.0";
+    const CONFIG_URL = "https://raw.githubusercontent.com/squishy01/NTA-Local-Tools/refs/heads/main/NTAlocal_config.json";
+    const UPDATE_URL = "https://github.com/squishy01/NTA-Local-Tools/raw/refs/heads/main/NTALocal_valuetracker.user.js"; // Adjust to exact raw script path if needed
+
     const STORAGE_KEY = "koc_wealth_tracker";
     const SETTINGS_KEY = "koc_wealth_view_settings";
 
+    let isUpdateAvailable = false;
+    let remoteVersionStr = "";
+
+    // Helper: Safely fetch parsed JSON from LocalStorage
+    function getStoredData(key) {
+        try {
+            return JSON.parse(localStorage.getItem(key)) || {};
+        } catch (e) {
+            console.error(`Error loading key "${key}" from localStorage`, e);
+            return {};
+        }
+    }
+
+    // Helper: Safely save data to LocalStorage
+    function setStoredData(key, value) {
+        try {
+            localStorage.setItem(key, JSON.stringify(value));
+        } catch (e) {
+            console.error(`Error saving key "${key}" to localStorage`, e);
+        }
+    }
 
     function cleanNumber(value) {
         return Number(value.replace(/[(),\s]/g, ''));
     }
 
-
     function formatElapsed(timestamp) {
-
         if (!timestamp) return "";
 
         const stored = new Date(timestamp.replace(" ", "T"));
         const now = new Date();
-
         let seconds = Math.floor((now - stored) / 1000);
 
-        if (seconds < 0) seconds = 0;
-
+        if (isNaN(seconds) || seconds < 0) seconds = 0;
 
         const days = Math.floor(seconds / 86400);
         seconds %= 86400;
 
-
         const hours = Math.floor(seconds / 3600);
         seconds %= 3600;
-
 
         const minutes = Math.floor(seconds / 60);
         seconds %= 60;
 
-
         let result = "";
-
-        if (days)
-            result += days + "d ";
-
-        if (hours || days)
-            result += hours + "h ";
-
-        if (minutes || hours || days)
-            result += minutes + "m ";
-
-
+        if (days) result += days + "d ";
+        if (hours || days) result += hours + "h ";
+        if (minutes || hours || days) result += minutes + "m ";
         result += seconds + "s";
 
         return result;
     }
 
+    // ==================================================
+    // VERSION CHECKER
+    // ==================================================
 
+    function checkVersion() {
+        if (typeof GM_xmlhttpRequest === "undefined") return;
+
+        GM_xmlhttpRequest({
+            method: "GET",
+            url: CONFIG_URL,
+            onload: function (response) {
+                try {
+                    const config = JSON.parse(response.responseText);
+                    const remoteVersion = config?.version?.value_tracker;
+
+                    if (remoteVersion && remoteVersion !== SCRIPT_VERSION) {
+                        isUpdateAvailable = true;
+                        remoteVersionStr = remoteVersion;
+                        showUpdateIndicator();
+                    }
+                } catch (err) {
+                    console.error("Failed to parse NTA remote config JSON", err);
+                }
+            }
+        });
+    }
+
+    function showUpdateIndicator() {
+        // Add update badge on main launcher button
+        const mainBtn = document.getElementById("kocViewerBtn");
+        if (mainBtn && !document.getElementById("kocUpdateBadge")) {
+            const badge = document.createElement("span");
+            badge.id = "kocUpdateBadge";
+            badge.textContent = " [Update Available!]";
+            badge.style.color = "#ff4d4d";
+            badge.style.fontWeight = "bold";
+            mainBtn.appendChild(badge);
+        }
+
+        // Add update link in open modal header if modal exists
+        const header = document.querySelector("#kocViewer .koc-header");
+        if (header && !document.getElementById("kocHeaderUpdateLink")) {
+            const updateLink = document.createElement("a");
+            updateLink.id = "kocHeaderUpdateLink";
+            updateLink.href = UPDATE_URL;
+            updateLink.target = "_blank";
+            updateLink.textContent = `Update Available (v${remoteVersionStr})`;
+            updateLink.style.cssText = "color: #ff4d4d; font-weight: bold; text-decoration: underline; margin-left: 15px;";
+            header.querySelector("h2").appendChild(updateLink);
+        }
+    }
 
     // ==================================================
     // TRACK CURRENT TARGET
     // ==================================================
 
     function trackTarget() {
+        const statsLink = document.querySelector('a[href^="stats.php?id="]');
+        if (!statsLink) return;
 
-        const statsLink =
-            document.querySelector('a[href^="stats.php?id="]');
-
-
-        if (!statsLink)
-            return;
-
-
-
-        const idMatch =
-            statsLink.href.match(/id=(\d+)/);
-
-
-
-        if (!idMatch)
-            return;
-
-
+        const idMatch = statsLink.href.match(/id=(\d+)/);
+        if (!idMatch) return;
 
         const targetId = idMatch[1];
+        const pageText = document.body.innerText;
 
+        const invested = pageText.match(/Total Invested Value:\s*\(?([\d,]+)\)?/i);
+        const sell = pageText.match(/Total Sell Value:\s*\(?([\d,]+)\)?/i);
+        const sabcap = pageText.match(/Maximum Daily Sabotage loss:\s*\(?([\d,]+)\)?/i);
+        const timestamp = pageText.match(/\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}/);
 
-        const record = {
+        // Don't overwrite if no values exist on the page
+        if (!invested && !sell && !sabcap) return;
 
-            target:
-                statsLink.textContent.trim()
-
+        const db = getStoredData(STORAGE_KEY);
+        db[targetId] = {
+            ...(db[targetId] || {}),
+            target: statsLink.textContent.trim(),
+            ...(invested && { target_value: cleanNumber(invested[1]) }),
+            ...(sell && { target_sell: cleanNumber(sell[1]) }),
+            ...(sabcap && { target_sabcap: cleanNumber(sabcap[1]) }),
+            ...(timestamp && { koc_timestamp: timestamp[0] })
         };
 
-
-
-        const pageText =
-            document.body.innerText;
-
-
-
-        const invested =
-            pageText.match(
-                /Total Invested Value:\s*\(?([\d,]+)\)?/i
-            );
-
-
-        const sell =
-            pageText.match(
-                /Total Sell Value:\s*\(?([\d,]+)\)?/i
-            );
-
-
-        const sabcap =
-            pageText.match(
-                /Maximum Daily Sabotage loss:\s*\(?([\d,]+)\)?/i
-            );
-
-
-
-        record.target_value =
-            invested
-            ? cleanNumber(invested[1])
-            : null;
-
-
-        record.target_sell =
-            sell
-            ? cleanNumber(sell[1])
-            : null;
-
-
-        record.target_sabcap =
-            sabcap
-            ? cleanNumber(sabcap[1])
-            : null;
-
-
-
-
-        const timestamp =
-            pageText.match(
-                /\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}/
-            );
-
-
-
-        if (timestamp) {
-
-            record.koc_timestamp =
-                timestamp[0];
-
-        }
-
-
-
-
-        let db =
-            JSON.parse(
-                localStorage.getItem(STORAGE_KEY)
-                || "{}"
-            );
-
-
-
-        db[targetId] = record;
-
-
-
-        localStorage.setItem(
-            STORAGE_KEY,
-            JSON.stringify(db)
-        );
-
-
-
-        console.log(
-            "Updated target:",
-            targetId,
-            record
-        );
-
+        setStoredData(STORAGE_KEY, db);
+        console.log("Updated target:", targetId, db[targetId]);
     }
-
-
-
-
 
     // ==================================================
     // BUTTON
     // ==================================================
 
     function createButton() {
+        const btn = document.createElement("button");
+        btn.id = "kocViewerBtn";
+        btn.textContent = "View KoC Player Values";
+        btn.style.cssText = `
+            position: fixed;
+            top: 10px;
+            left: 10px;
+            z-index: 99999;
+            padding: 10px 15px;
+            background: #222;
+            color: white;
+            border: 1px solid #555;
+            border-radius: 6px;
+            cursor: pointer;
+        `;
 
-
-        const btn =
-            document.createElement("button");
-
-
-
-        btn.textContent =
-            "View KoC Player Values";
-
-
-
-        btn.style.position =
-            "fixed";
-
-        btn.style.top =
-            "10px";
-
-        btn.style.left =
-            "10px";
-
-        btn.style.zIndex =
-            "99999";
-
-        btn.style.padding =
-            "10px 15px";
-
-        btn.style.background =
-            "#222";
-
-        btn.style.color =
-            "white";
-
-        btn.style.border =
-            "1px solid #555";
-
-        btn.style.borderRadius =
-            "6px";
-
-        btn.style.cursor =
-            "pointer";
-
-
-
-        btn.onclick =
-            openViewer;
-
-
-
+        btn.onclick = openViewer;
         document.body.appendChild(btn);
 
+        if (isUpdateAvailable) {
+            showUpdateIndicator();
+        }
     }
-
-
-
-
 
     // ==================================================
     // VIEWER
     // ==================================================
 
     function openViewer() {
+        if (document.getElementById("kocViewer")) return;
 
+        let settings = getStoredData(SETTINGS_KEY);
 
-        let settings =
-            JSON.parse(
-                localStorage.getItem(SETTINGS_KEY)
-                || "{}"
-            );
-
-
-
-        const overlay =
-            document.createElement("div");
-
-
-
-        overlay.id =
-            "kocViewer";
-
-
-
+        const overlay = document.createElement("div");
+        overlay.id = "kocViewer";
         overlay.innerHTML = `
-
         <div class="koc-box">
-
-
             <div class="koc-header">
-
                 <h2>
                     KoC Player Wealth
+                    ${isUpdateAvailable ? `<a id="kocHeaderUpdateLink" href="${UPDATE_URL}" target="_blank" style="color:#ff4d4d;font-weight:bold;text-decoration:underline;margin-left:15px;">Update Available (v${remoteVersionStr})</a>` : ''}
                 </h2>
-
-
-                <button id="kocClose">
-                    X
-                </button>
-
-
+                <button id="kocClose">X</button>
             </div>
-
-
-
             <div class="koc-controls">
-
-
-                <input
-                    id="kocSearch"
-                    placeholder="Search name or ID"
-                >
-
-
-
+                <input id="kocSearch" placeholder="Search name or ID">
                 <select id="kocSort">
-
-                    <option value="invested">
-                        Sort: Invested
-                    </option>
-
-                    <option value="name">
-                        Sort: Name
-                    </option>
-
-                    <option value="id">
-                        Sort: ID
-                    </option>
-
+                    <option value="invested">Sort: Invested</option>
+                    <option value="name">Sort: Name</option>
+                    <option value="id">Sort: ID</option>
                 </select>
-
-
-
-                <button id="kocDirection">
-                    Sort Direction
-                </button>
-
-
-
-                <button id="kocRefresh">
-                    Refresh List
-                </button>
-
-
-
-                <button id="kocExport">
-                    Export
-                </button>
-
-
-
-                <button id="kocImport">
-                    Import
-                </button>
-
-
-
-                <input
-                    id="kocImportFile"
-                    type="file"
-                    accept=".json"
-                    style="display:none"
-                >
-
-
-
+                <button id="kocDirection">Sort Direction</button>
+                <button id="kocRefresh">Refresh List</button>
+                <button id="kocExport">Export</button>
+                <button id="kocImport">Import</button>
+                <input id="kocImportFile" type="file" accept=".json" style="display:none">
                 <select id="kocLimit">
-
-                    <option value="10">
-                        10
-                    </option>
-
-
-                    <option value="25">
-                        25
-                    </option>
-
-
-                    <option value="50">
-                        50
-                    </option>
-
-
-                    <option value="100">
-                        100
-                    </option>
-
-
+                    <option value="10">10</option>
+                    <option value="25">25</option>
+                    <option value="50">50</option>
+                    <option value="100">100</option>
                 </select>
-
-
             </div>
-
-
-
-
-
             <table>
-
-
                 <thead>
-
                     <tr>
-
                         <th>#</th>
-
                         <th>Name</th>
-
                         <th>ID</th>
-
                         <th>Invested</th>
-
                         <th>Sell</th>
-
                         <th>Sab Cap</th>
-
                         <th>Time</th>
-
                     </tr>
-
-
                 </thead>
-
-
-
                 <tbody id="kocRows"></tbody>
-
-
-
             </table>
-
-
-
-
-
             <div class="koc-pages">
-
-
-                <button id="kocPrev">
-                    Previous
-                </button>
-
-
-
+                <button id="kocPrev">Previous</button>
                 <span id="kocPage"></span>
-
-
-
-                <button id="kocNext">
-                    Next
-                </button>
-
-
+                <button id="kocNext">Next</button>
             </div>
-
-
-
         </div>
-
         `;
-
 
         document.body.appendChild(overlay);
 
-
-        const style =
-            document.createElement("style");
-                style.textContent = `
-
+        const style = document.createElement("style");
+        style.id = "kocViewerStyles";
+        style.textContent = `
         #kocViewer {
-
             position:fixed;
             inset:0;
             background:rgba(0,0,0,.7);
@@ -473,13 +266,8 @@
             justify-content:center;
             align-items:center;
             font-family:Arial,sans-serif;
-
         }
-
-
-
         #kocViewer .koc-box {
-
             background:#111;
             color:white;
             width:90%;
@@ -489,853 +277,231 @@
             padding:20px;
             border-radius:12px;
             box-shadow:0 0 30px black;
-
         }
-
-
-
         #kocViewer .koc-header {
-
             display:flex;
             justify-content:space-between;
             align-items:center;
-
         }
-
-
-
         #kocViewer .koc-controls {
-
             display:flex;
             flex-wrap:wrap;
             gap:10px;
             margin:15px 0;
-
         }
-
-
-
-        #kocViewer input,
-        #kocViewer select,
-        #kocViewer button {
-
+        #kocViewer input, #kocViewer select, #kocViewer button {
             padding:7px;
-
         }
-
-
-
         #kocViewer table {
-
             width:100%;
             border-collapse:collapse;
-
         }
-
-
-
-        #kocViewer th,
-        #kocViewer td {
-
+        #kocViewer th, #kocViewer td {
             border-bottom:1px solid #444;
             padding:8px;
             text-align:center;
-
         }
-
-
-
         #kocViewer a {
-
             color:#66b3ff;
-
         }
-
-
-
         #kocViewer .koc-pages {
-
             display:flex;
             justify-content:center;
             gap:20px;
             margin-top:15px;
-
         }
-
         `;
-
-
-
         document.head.appendChild(style);
 
-
+        const ui = {
+            search: document.getElementById("kocSearch"),
+            sort: document.getElementById("kocSort"),
+            limit: document.getElementById("kocLimit"),
+            rows: document.getElementById("kocRows"),
+            pageDisplay: document.getElementById("kocPage"),
+            importFile: document.getElementById("kocImportFile")
+        };
 
         let page = 0;
 
-
-
-
         function render() {
+            const db = getStoredData(STORAGE_KEY);
+            let rows = Object.entries(db).map(([id, value]) => ({ id, ...value }));
 
-
-            let db =
-                JSON.parse(
-                    localStorage.getItem(STORAGE_KEY)
-                    || "{}"
+            const searchVal = ui.search.value.toLowerCase().trim();
+            if (searchVal) {
+                rows = rows.filter(x =>
+                    x.id.includes(searchVal) ||
+                    (x.target || "").toLowerCase().includes(searchVal)
                 );
-
-
-
-            let rows =
-                Object.entries(db)
-                .map(([id,value])=>({
-
-                    id,
-                    ...value
-
-                }));
-
-
-
-
-            const search =
-                document.getElementById("kocSearch")
-                .value
-                .toLowerCase();
-
-
-
-
-            rows =
-                rows.filter(x=>
-
-
-                    x.id.includes(search)
-
-
-                    ||
-
-                    (x.target || "")
-                    .toLowerCase()
-                    .includes(search)
-
-
-                );
-
-
-
-
-
-            const sort =
-                document.getElementById("kocSort")
-                .value;
-
-
-
-
-            const direction =
-                settings.direction === "asc"
-                ? 1
-                : -1;
-
-
-
-
-
-            rows.sort((a,b)=>{
-
-
-                if(sort === "name") {
-
-
-                    return (
-
-                        (a.target || "")
-                        .localeCompare(
-                            b.target || ""
-                        )
-
-                    ) * direction;
-
-
-                }
-
-
-
-                if(sort === "id") {
-
-
-                    return (
-
-                        Number(a.id)
-                        -
-                        Number(b.id)
-
-                    ) * direction;
-
-
-                }
-
-
-
-
-                return (
-
-                    (a.target_value || 0)
-                    -
-                    (b.target_value || 0)
-
-                ) * direction;
-
-
-            });
-
-
-
-
-
-
-            const limit =
-                Number(
-                    document.getElementById("kocLimit")
-                    .value
-                );
-
-
-
-
-
-            const totalPages =
-                Math.max(
-
-                    1,
-
-                    Math.ceil(
-                        rows.length / limit
-                    )
-
-                );
-
-
-
-
-
-            if(page >= totalPages) {
-
-                page =
-                    totalPages - 1;
-
             }
 
+            const sortVal = ui.sort.value;
+            const direction = settings.direction === "asc" ? 1 : -1;
 
+            rows.sort((a, b) => {
+                if (sortVal === "name") {
+                    return (a.target || "").localeCompare(b.target || "") * direction;
+                }
+                if (sortVal === "id") {
+                    return (Number(a.id) - Number(b.id)) * direction;
+                }
+                return ((a.target_value || 0) - (b.target_value || 0)) * direction;
+            });
 
+            const limit = Number(ui.limit.value) || 25;
+            const totalPages = Math.max(1, Math.ceil(rows.length / limit));
 
+            if (page >= totalPages) {
+                page = totalPages - 1;
+            }
 
-            const display =
-                rows.slice(
+            const display = rows.slice(page * limit, (page + 1) * limit);
 
-                    page * limit,
-
-                    (page + 1) * limit
-
-                );
-
-
-
-
-
-            document.getElementById("kocRows")
-            .innerHTML =
-
-
-
-            display.map((x,i)=>`
-
-
+            ui.rows.innerHTML = display.map((x, i) => `
                 <tr>
-
-
+                    <td>${page * limit + i + 1}</td>
                     <td>
-                        ${page * limit + i + 1}
-                    </td>
-
-
-
-
-                    <td>
-
-                        <a
-                        href="https://www.kingsofchaos.com/stats.php?id=${x.id}"
-                        target="_blank">
-
+                        <a href="https://www.kingsofchaos.com/stats.php?id=${x.id}" target="_blank">
                             ${x.target || ""}
-
                         </a>
-
                     </td>
-
-
-
-
-
                     <td>
-
-                        <a
-                        href="https://www.kingsofchaos.com/attack.php?id=${x.id}"
-                        target="_blank">
-
+                        <a href="https://www.kingsofchaos.com/attack.php?id=${x.id}" target="_blank">
                             ${x.id}
-
                         </a>
-
                     </td>
-
-
-
-
-
-                    <td>
-
-                        ${
-                        x.target_value
-                        ?
-                        x.target_value.toLocaleString()
-                        :
-                        ""
-                        }
-
+                    <td>${x.target_value ? x.target_value.toLocaleString() : ""}</td>
+                    <td>${x.target_sell ? x.target_sell.toLocaleString() : ""}</td>
+                    <td>${x.target_sabcap ? x.target_sabcap.toLocaleString() : ""}</td>
+                    <td class="koc-time" data-time="${x.koc_timestamp || ""}">
+                        ${formatElapsed(x.koc_timestamp)}
                     </td>
-
-
-
-
-
-                    <td>
-
-                        ${
-                        x.target_sell
-                        ?
-                        x.target_sell.toLocaleString()
-                        :
-                        ""
-                        }
-
-                    </td>
-
-
-
-
-
-                    <td>
-
-                        ${
-                        x.target_sabcap
-                        ?
-                        x.target_sabcap.toLocaleString()
-                        :
-                        ""
-                        }
-
-                    </td>
-
-
-
-
-
-                    <td
-                    class="koc-time"
-                    data-time="${x.koc_timestamp || ""}">
-
-                        ${formatElapsed(
-                            x.koc_timestamp
-                        )}
-
-                    </td>
-
-
-
-
                 </tr>
-
-
             `).join("");
 
-
-
-
-
-            document.getElementById("kocPage")
-            .textContent =
-
-                `${page + 1} / ${totalPages}`;
-
-
-
-
-
-
-            document.querySelectorAll(".koc-time")
-            .forEach(cell=>{
-
-
-                cell.onmouseenter = ()=>{
-
-
-                    cell.textContent =
-                        cell.dataset.time;
-
-
-                };
-
-
-
-                cell.onmouseleave = ()=>{
-
-
-                    cell.textContent =
-                        formatElapsed(
-                            cell.dataset.time
-                        );
-
-
-                };
-
-
-            });
-
-
+            ui.pageDisplay.textContent = `${page + 1} / ${totalPages}`;
         }
 
-                function closeViewer() {
+        ui.rows.addEventListener("mouseover", (e) => {
+            const cell = e.target.closest(".koc-time");
+            if (cell && cell.dataset.time) {
+                cell.textContent = cell.dataset.time;
+            }
+        });
 
+        ui.rows.addEventListener("mouseout", (e) => {
+            const cell = e.target.closest(".koc-time");
+            if (cell && cell.dataset.time) {
+                cell.textContent = formatElapsed(cell.dataset.time);
+            }
+        });
+
+        function closeViewer() {
             overlay.remove();
             style.remove();
-
         }
 
+        document.getElementById("kocClose").onclick = closeViewer;
+        overlay.onclick = (e) => { if (e.target === overlay) closeViewer(); };
 
-
-        // Close X button
-        document.getElementById("kocClose")
-        .onclick = closeViewer;
-
-
-
-        // Click outside overlay closes it
-        overlay.onclick = (e)=>{
-
-            if(e.target === overlay) {
-
-                closeViewer();
-
-            }
-
+        document.getElementById("kocPrev").onclick = () => {
+            if (page > 0) { page--; render(); }
         };
 
-
-
-        // Previous page
-        document.getElementById("kocPrev")
-        .onclick = ()=>{
-
-            if(page > 0) {
-
-                page--;
-
-            }
-
-            render();
-
+        document.getElementById("kocNext").onclick = () => {
+            page++; render();
         };
 
-
-
-        // Next page
-        document.getElementById("kocNext")
-        .onclick = ()=>{
-
-            page++;
-
-            render();
-
-        };
-
-
-
-
-        // Search
-        document.getElementById("kocSearch")
-        .value =
-            settings.search || "";
-
-
-
-        document.getElementById("kocSearch")
-        .oninput = (e)=>{
-
-
-            settings.search =
-                e.target.value;
-
-
-
-            localStorage.setItem(
-                SETTINGS_KEY,
-                JSON.stringify(settings)
-            );
-
-
-
+        ui.search.value = settings.search || "";
+        ui.search.oninput = (e) => {
+            settings.search = e.target.value;
+            setStoredData(SETTINGS_KEY, settings);
             page = 0;
-
             render();
-
         };
 
-
-
-
-
-        // Sort
-        document.getElementById("kocSort")
-        .value =
-            settings.sort || "invested";
-
-
-
-        document.getElementById("kocSort")
-        .onchange = (e)=>{
-
-
-            settings.sort =
-                e.target.value;
-
-
-
-            localStorage.setItem(
-                SETTINGS_KEY,
-                JSON.stringify(settings)
-            );
-
-
-
+        ui.sort.value = settings.sort || "invested";
+        ui.sort.onchange = (e) => {
+            settings.sort = e.target.value;
+            setStoredData(SETTINGS_KEY, settings);
             page = 0;
-
             render();
-
         };
 
-
-
-
-
-        // Records per page
-        document.getElementById("kocLimit")
-        .value =
-            settings.limit || "25";
-
-
-
-        document.getElementById("kocLimit")
-        .onchange = (e)=>{
-
-
-            settings.limit =
-                e.target.value;
-
-
-
-            localStorage.setItem(
-                SETTINGS_KEY,
-                JSON.stringify(settings)
-            );
-
-
-
+        ui.limit.value = settings.limit || "25";
+        ui.limit.onchange = (e) => {
+            settings.limit = e.target.value;
+            setStoredData(SETTINGS_KEY, settings);
             page = 0;
-
             render();
-
         };
 
-
-
-
-
-
-        // Sort direction
-        document.getElementById("kocDirection")
-        .onclick = ()=>{
-
-
-            settings.direction =
-                settings.direction === "asc"
-                ? "desc"
-                : "asc";
-
-
-
-            localStorage.setItem(
-                SETTINGS_KEY,
-                JSON.stringify(settings)
-            );
-
-
-
+        document.getElementById("kocDirection").onclick = () => {
+            settings.direction = settings.direction === "asc" ? "desc" : "asc";
+            setStoredData(SETTINGS_KEY, settings);
             render();
-
         };
 
-
-
-
-
-
-        // Refresh list
-        // Reloads localStorage data and updates display
-        document.getElementById("kocRefresh")
-        .onclick = ()=>{
-
-
+        document.getElementById("kocRefresh").onclick = () => {
             page = 0;
-
             render();
-
         };
 
-
-
-
-
-
-
-        // ==================================================
-        // EXPORT BACKUP
-        // ==================================================
-
-        document.getElementById("kocExport")
-        .onclick = ()=>{
-
-
-            const data =
-                localStorage.getItem(STORAGE_KEY)
-                || "{}";
-
-
-
-            const blob =
-                new Blob(
-
-                    [data],
-
-                    {
-                        type:
-                        "application/json"
-                    }
-
-                );
-
-
-
-            const url =
-                URL.createObjectURL(blob);
-
-
-
-            const link =
-                document.createElement("a");
-
-
+        // Export
+        document.getElementById("kocExport").onclick = () => {
+            const data = localStorage.getItem(STORAGE_KEY) || "{}";
+            const blob = new Blob([data], { type: "application/json" });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement("a");
 
             link.href = url;
-
-
-
-            link.download =
-                "koc_wealth_backup.json";
-
-
-
+            link.download = "koc_wealth_backup.json";
             link.click();
-
-
-
             URL.revokeObjectURL(url);
-
-
         };
 
-
-
-
-
-
-
-        // ==================================================
-        // IMPORT BACKUP
-        // ==================================================
-
-        document.getElementById("kocImport")
-        .onclick = ()=>{
-
-
-            document.getElementById("kocImportFile")
-            .click();
-
-
+        // Import
+        document.getElementById("kocImport").onclick = () => {
+            ui.importFile.click();
         };
 
+        ui.importFile.onchange = (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
 
-
-
-
-
-        document.getElementById("kocImportFile")
-        .onchange = (e)=>{
-
-
-            const file =
-                e.target.files[0];
-
-
-
-            if(!file)
-                return;
-
-
-
-
-
-            const reader =
-                new FileReader();
-
-
-
-
-
-            reader.onload = (event)=>{
-
-
+            const reader = new FileReader();
+            reader.onload = (event) => {
                 try {
+                    const imported = JSON.parse(event.target.result);
+                    const current = getStoredData(STORAGE_KEY);
+                    const updated = { ...current, ...imported };
 
-
-
-                    const imported =
-                        JSON.parse(
-                            event.target.result
-                        );
-
-
-
-                    let current =
-                        JSON.parse(
-
-                            localStorage.getItem(
-                                STORAGE_KEY
-                            )
-                            ||
-                            "{}"
-
-                        );
-
-
-
-
-                    current = {
-
-                        ...current,
-
-                        ...imported
-
-                    };
-
-
-
-
-
-                    localStorage.setItem(
-
-                        STORAGE_KEY,
-
-                        JSON.stringify(
-                            current
-                        )
-
-                    );
-
-
-
-
-
+                    setStoredData(STORAGE_KEY, updated);
                     page = 0;
-
                     render();
-
-
-
-
-
-                    alert(
-                        "Import complete"
-                    );
-
-
-
+                    alert("Import complete");
+                } catch (err) {
+                    alert("Invalid backup file");
                 }
-                catch(err) {
-
-
-
-                    alert(
-                        "Invalid backup file"
-                    );
-
-
-
-                }
-
-
-
             };
-
-
-
-
-
             reader.readAsText(file);
-
-
         };
-
-
-
-
 
         render();
-
-
     }
 
-
-
-
-
-
     // ==================================================
-// START
-// ==================================================
+    // START
+    // ==================================================
 
-// Only collect wealth data from attack pages
-if (
-    window.location.pathname.includes("/attack.php") &&
-    window.location.search.includes("id=")
-) {
-    trackTarget();
-}
+    if (
+        window.location.pathname.includes("/attack.php") &&
+        window.location.search.includes("id=")
+    ) {
+        trackTarget();
+    }
 
-// Always allow viewer access
-createButton();
-
-
-
+    createButton();
+    checkVersion();
 })();
