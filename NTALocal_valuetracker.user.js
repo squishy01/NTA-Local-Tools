@@ -5,6 +5,7 @@
 // @description  Tracks and displays KoC player wealth values.
 // @match        https://www.kingsofchaos.com/*
 // @grant        GM_xmlhttpRequest
+// @grant        GM_info
 // @connect      raw.githubusercontent.com
 // ==/UserScript==
 
@@ -14,9 +15,12 @@
     // ==================================================
     // CONFIGURATION & UPDATE LINKS
     // ==================================================
-    const SCRIPT_VERSION = "1.0.0";
+    const INSTALLED_VERSION = (typeof GM_info !== "undefined" && GM_info.script)
+        ? GM_info.script.version
+        : "1.0.0";
+
     const CONFIG_URL = "https://raw.githubusercontent.com/squishy01/NTA-Local-Tools/refs/heads/main/NTAlocal_config.json";
-    const UPDATE_URL = "https://github.com/squishy01/NTA-Local-Tools/raw/refs/heads/main/NTALocal_valuetracker.user.js"; // Adjust to exact raw script path if needed
+    const UPDATE_URL = "https://github.com/squishy01/NTA-Local-Tools/raw/refs/heads/main/NTALocal_valuetracker.user.js";
 
     const STORAGE_KEY = "koc_wealth_tracker";
     const SETTINGS_KEY = "koc_wealth_view_settings";
@@ -78,20 +82,60 @@
     // VERSION CHECKER
     // ==================================================
 
+    function compareVersions(v1, v2) {
+        if (!v1 || !v2) return 0;
+        const clean = (v) => String(v).trim().replace(/^v/i, '').replace(/["']/g, '');
+        const p1 = clean(v1).split('.').map(Number);
+        const p2 = clean(v2).split('.').map(Number);
+
+        const len = Math.max(p1.length, p2.length);
+        for (let i = 0; i < len; i++) {
+            const num1 = p1[i] || 0;
+            const num2 = p2[i] || 0;
+            if (num1 > num2) return 1;
+            if (num1 < num2) return -1;
+        }
+        return 0;
+    }
+
+    function showUpdateIndicator() {
+        const btn = document.getElementById("kocViewerBtn");
+        if (btn && !document.getElementById("kocUpdateBadge")) {
+            const badge = document.createElement("span");
+            badge.id = "kocUpdateBadge";
+            badge.textContent = " [Update Available!]";
+            badge.style.color = "#ff4d4d";
+            badge.style.fontWeight = "bold";
+            btn.appendChild(badge);
+        }
+
+        const headerH2 = document.querySelector("#kocViewer .koc-header h2");
+        if (headerH2 && !document.getElementById("kocHeaderUpdateLink")) {
+            const updateLink = document.createElement("a");
+            updateLink.id = "kocHeaderUpdateLink";
+            updateLink.href = UPDATE_URL;
+            updateLink.target = "_blank";
+            updateLink.textContent = `Update Available (v${remoteVersionStr})`;
+            updateLink.style.cssText = "color:#ff4d4d;font-weight:bold;text-decoration:underline;margin-left:15px;";
+            headerH2.appendChild(updateLink);
+        }
+    }
+
     function checkVersion() {
         if (typeof GM_xmlhttpRequest === "undefined") return;
 
         GM_xmlhttpRequest({
             method: "GET",
             url: CONFIG_URL,
+            headers: { "Cache-Control": "no-cache" },
             onload: function (response) {
                 try {
                     const config = JSON.parse(response.responseText);
                     const remoteVersion = config?.version?.value_tracker;
 
-                    if (remoteVersion && remoteVersion !== SCRIPT_VERSION) {
+                    if (remoteVersion && compareVersions(remoteVersion, INSTALLED_VERSION) > 0) {
                         isUpdateAvailable = true;
-                        remoteVersionStr = remoteVersion;
+                        remoteVersionStr = String(remoteVersion).trim();
                         showUpdateIndicator();
                     }
                 } catch (err) {
@@ -99,31 +143,6 @@
                 }
             }
         });
-    }
-
-    function showUpdateIndicator() {
-        // Add update badge on main launcher button
-        const mainBtn = document.getElementById("kocViewerBtn");
-        if (mainBtn && !document.getElementById("kocUpdateBadge")) {
-            const badge = document.createElement("span");
-            badge.id = "kocUpdateBadge";
-            badge.textContent = " [Update Available!]";
-            badge.style.color = "#ff4d4d";
-            badge.style.fontWeight = "bold";
-            mainBtn.appendChild(badge);
-        }
-
-        // Add update link in open modal header if modal exists
-        const header = document.querySelector("#kocViewer .koc-header");
-        if (header && !document.getElementById("kocHeaderUpdateLink")) {
-            const updateLink = document.createElement("a");
-            updateLink.id = "kocHeaderUpdateLink";
-            updateLink.href = UPDATE_URL;
-            updateLink.target = "_blank";
-            updateLink.textContent = `Update Available (v${remoteVersionStr})`;
-            updateLink.style.cssText = "color: #ff4d4d; font-weight: bold; text-decoration: underline; margin-left: 15px;";
-            header.querySelector("h2").appendChild(updateLink);
-        }
     }
 
     // ==================================================
@@ -145,7 +164,6 @@
         const sabcap = pageText.match(/Maximum Daily Sabotage loss:\s*\(?([\d,]+)\)?/i);
         const timestamp = pageText.match(/\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}/);
 
-        // Don't overwrite if no values exist on the page
         if (!invested && !sell && !sabcap) return;
 
         const db = getStoredData(STORAGE_KEY);
