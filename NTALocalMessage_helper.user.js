@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NTA Local Tools - Message Helper
 // @namespace    https://www.kingsofchaos.com/
-// @version      1.6
+// @version      1.1.0
 // @description  KoC Recruit Helper
 // @match        https://www.kingsofchaos.com/writemail.php*
 // @grant        none
