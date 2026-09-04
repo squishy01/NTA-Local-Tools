@@ -2,13 +2,173 @@
 // @name         NTA Local Tools - Message Helper
 // @namespace    https://www.kingsofchaos.com/
 // @version      1.1.0
-// @description  KoC Recruit Helper
+// @description  KoC Message Helper
 // @match        https://www.kingsofchaos.com/writemail.php*
-// @grant        none
+// @grant        GM_xmlhttpRequest
+// @grant        GM_info
+// @connect      raw.githubusercontent.com
 // ==/UserScript==
 
 (function () {
     'use strict';
+
+    // ==================================================
+// UPDATE CHECKER
+// ==================================================
+
+const INSTALLED_VERSION =
+    (typeof GM_info !== 'undefined' && GM_info.script)
+        ? GM_info.script.version
+        : '1.0.0';
+
+const CONFIG_URL =
+    'https://raw.githubusercontent.com/squishy01/NTA-Local-Tools/refs/heads/main/NTAlocal_config.json';
+
+const UPDATE_URL =
+    'https://github.com/squishy01/NTA-Local-Tools/raw/refs/heads/main/NTALocalMessage_helper.user.js';
+
+let isUpdateAvailable = false;
+let remoteVersionStr = '';
+
+function compareVersions(v1, v2) {
+    if (!v1 || !v2) {
+        return 0;
+    }
+
+    const clean = (v) =>
+        String(v)
+            .trim()
+            .replace(/^v/i, '')
+            .replace(/["']/g, '');
+
+    const p1 = clean(v1)
+        .split('.')
+        .map(Number);
+
+    const p2 = clean(v2)
+        .split('.')
+        .map(Number);
+
+    const len =
+        Math.max(p1.length, p2.length);
+
+    for (let i = 0; i < len; i++) {
+        const num1 = p1[i] || 0;
+        const num2 = p2[i] || 0;
+
+        if (num1 > num2) {
+            return 1;
+        }
+
+        if (num1 < num2) {
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
+function showUpdateIndicator() {
+    const title =
+        document.querySelector(
+            '#ntaRecruitHelper .rh-title'
+        );
+
+    if (
+        !title ||
+        document.querySelector(
+            '#ntaMessageHelperUpdate'
+        )
+    ) {
+        return;
+    }
+
+    const updateLink =
+        document.createElement('a');
+
+    updateLink.id =
+        'ntaMessageHelperUpdate';
+
+    updateLink.href =
+        UPDATE_URL;
+
+    updateLink.target =
+        '_blank';
+
+    updateLink.textContent =
+        `Update Available (v${remoteVersionStr})`;
+
+    updateLink.style.cssText = `
+        color: #ff4d4d;
+        font-weight: bold;
+        text-decoration: underline;
+        margin-left: 12px;
+    `;
+
+    title.appendChild(updateLink);
+}
+
+function checkVersion() {
+    if (
+        typeof GM_xmlhttpRequest ===
+        'undefined'
+    ) {
+        return;
+    }
+
+    GM_xmlhttpRequest({
+        method: 'GET',
+
+        url: CONFIG_URL,
+
+        headers: {
+            'Cache-Control': 'no-cache'
+        },
+
+        onload: function (response) {
+            try {
+                const config =
+                    JSON.parse(
+                        response.responseText
+                    );
+
+                const remoteVersion =
+                    config?.version
+                        ?.message_helper;
+
+                if (
+                    remoteVersion &&
+                    compareVersions(
+                        remoteVersion,
+                        INSTALLED_VERSION
+                    ) > 0
+                ) {
+                    isUpdateAvailable =
+                        true;
+
+                    remoteVersionStr =
+                        String(
+                            remoteVersion
+                        ).trim();
+
+                    showUpdateIndicator();
+                }
+            } catch (error) {
+                console.error(
+                    'NTA Message Helper: Failed to parse remote config JSON',
+                    error
+                );
+            }
+        },
+
+        onerror: function (error) {
+            console.error(
+                'NTA Message Helper: Update check failed',
+                error
+            );
+        }
+    });
+}
 
     const MESSAGE_STORAGE = 'koc_recruit_helper_messages';
     const AUTOFILL_STORAGE = 'nta_recruit_helper_autofill';
@@ -243,6 +403,10 @@
         }
 
         messageCell.appendChild(panel);
+
+        if (isUpdateAvailable) {
+    showUpdateIndicator();
+}
 
         const style = document.createElement('style');
 
@@ -708,5 +872,7 @@
             error
         );
     }
+
+    checkVersion();
 
 })();
