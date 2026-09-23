@@ -1,0 +1,1266 @@
+// ==UserScript==
+// @name         KoC Sab Tracker (Attack + Intel Merge)
+// @namespace    https://kingsofchaos.com/
+// @version      0.8
+// @description  Tracks sab data across attack + intel pages
+// @match        https://www.kingsofchaos.com/attack.php*
+// @match        https://www.kingsofchaos.com/inteldetail.php?*
+// @match        https://www.kingsofchaos.com/*
+// @grant        none
+// ==/UserScript==
+
+(function () {
+    'use strict';
+
+    const STORAGE_KEY = "koc_sab_reports";
+    const ATTACK_STORAGE_KEY = "koc_sab_attack";
+
+    const url = new URL(location.href);
+
+    // =========================
+    // ATTACK PAGE
+    // =========================
+    if (url.pathname.includes("attack.php")) {
+
+        const data = {
+            value_invested: null,
+            value_sell: null,
+            value_sab_cap: null,
+            value_lost: null,
+            spies: null,
+            spy: null,
+            spy_cap: null,
+            id: url.searchParams.get("id"),
+            attempts_sab: null,
+            attempts_sab_true: null,
+            target_focus: null,
+            target_focus_qty: null,
+            spies_sent: null
+        };
+
+        const bodyText = document.body.innerText;
+
+        const cleanNumber = s => Number(s.replace(/,/g, ''));
+        const cleanInt = s => Math.floor(Number(s.replace(/,/g, '')));
+
+        // attempts
+        let m = bodyText.match(/Sabotage Attempts\s+(\d+)\s*\/\s*10/i);
+        if (m) data.attempts_sab = Number(m[1]);
+
+        m = bodyText.match(/Successful Sabotage Missions\s+(\d+)\s*\/\s*10/i);
+        if (m) data.attempts_sab_true = Number(m[1]);
+
+        // values
+        m = bodyText.match(
+            /Total Invested Value:\s*\(([\d,]+)\).*?Total Sell Value:\s*\(([\d,]+)\).*?Maximum Daily Sabotage loss:\s*\(([\d,]+)\)/is
+        );
+
+        if (m) {
+            data.value_invested = cleanNumber(m[1]);
+            data.value_sell = cleanNumber(m[2]);
+            data.value_sab_cap = cleanNumber(m[3]);
+        }
+
+        // spy rating
+        m = bodyText.match(/Your Spy Rating\s*([\d,]+)\s*can sab up to\s*([\d,.]+)/i);
+
+        if (m) {
+            data.spy = cleanNumber(m[1]);
+            data.spy_cap = cleanInt(m[2]);
+        }
+
+        // loss
+        m = bodyText.match(/Total lost from sabbs in the last 24hours:\s*([\d,]+)/i);
+
+        if (m) {
+            data.value_lost = cleanNumber(m[1]);
+        }
+
+        // spies
+        m = bodyText.match(/Spies Available:\s*([\d,]+)/i);
+
+        if (m) {
+            data.spies = cleanNumber(m[1]);
+        }
+
+        // selections
+        const selected = document.querySelector(
+            'select[name="enemy_weapon"] option:checked'
+        );
+
+        if (selected) {
+            data.target_focus = selected.textContent
+                .replace(/\s*\(AAT:.*?\)/i, '')
+                .trim()
+                .toLowerCase();
+        }
+
+        const qty = document.querySelector('input[name="numsab"]');
+
+        if (qty) {
+            data.target_focus_qty = Number(qty.value);
+        }
+
+        const spies = document.querySelector('input[name="numspies"]');
+
+        if (spies) {
+            data.spies_sent = Number(spies.value);
+        }
+
+        // STORE ATTACK CONTEXT
+        sessionStorage.setItem(
+            ATTACK_STORAGE_KEY,
+            JSON.stringify(data)
+        );
+
+        console.log("[ATTACK CONTEXT STORED]", data);
+    }
+
+
+    // =========================
+    // INTEL DETAIL PAGE
+    // =========================
+    if (url.pathname.includes("inteldetail.php")) {
+
+        const bodyText = document.body.innerText;
+
+        const report = {
+            spies_sent: null,
+            spies_killed: null,
+            spies_lost: null,
+            sentries_killed: null,
+            sentries_lost: null,
+            target_name: null,
+            target_id: null,
+            target_focus: null,
+            target_focus_qty: null,
+            target_focus_remaining: null,
+            spoils_gold: null,
+            spoils_xp: null,
+            outcome: null,
+            logid: url.searchParams.get("report_id"),
+            lose: null
+        };
+
+        // =========================
+        // TARGET LINK
+        // =========================
+        const statsLink = document.querySelector(
+            'a[href*="stats.php?id="]'
+        );
+
+        if (statsLink) {
+            report.target_name = statsLink.textContent
+                .trim()
+                .replace(/'s$/, '');
+
+            report.target_id = new URL(statsLink.href)
+                .searchParams
+                .get("id");
+        }
+
+
+        // =========================
+        // ATTACK PAGE MERGE
+        // =========================
+        const attackRaw = sessionStorage.getItem(
+            ATTACK_STORAGE_KEY
+        );
+
+        const attack = attackRaw
+            ? JSON.parse(attackRaw)
+            : null;
+
+        /*
+         * Only merge the attack context when the attack target
+         * matches the target on the intel report.
+         *
+         * This prevents stale attack data from being attached
+         * to an unrelated report.
+         */
+        if (
+            attack &&
+            attack.id &&
+            report.target_id &&
+            attack.id === report.target_id
+        ) {
+            report.target_focus = attack.target_focus;
+            report.target_focus_qty = attack.target_focus_qty;
+            report.spies_sent = attack.spies_sent;
+
+            report._attack_context = attack;
+
+            // Consume the attack context once it has been merged.
+            sessionStorage.removeItem(ATTACK_STORAGE_KEY);
+
+            console.log(
+                "[SAB TRACKER] Attack context merged",
+                attack
+            );
+        }
+        else if (attack) {
+            console.log(
+                "[SAB TRACKER] Attack context target mismatch",
+                {
+                    attack_target: attack.id,
+                    report_target: report.target_id
+                }
+            );
+        }
+
+
+        // =========================
+        // DETECT INTENT
+        // =========================
+        let m = bodyText.match(
+            /dispatches\s+(\d+)\s+spies\s+to\s+attempt\s+to\s+sabotage\s+(\d+)\s+(.+?)\./i
+        );
+
+        if (m) {
+            report.spies_sent = Number(m[1]);
+            report.target_focus_qty = Number(m[2]);
+
+            report.target_focus = m[3]
+                .trim()
+                .toLowerCase()
+                .replace(/s$/, '');
+        }
+
+
+        // =========================
+        // SUCCESS
+        // =========================
+        if (/You were successful/i.test(bodyText)) {
+
+            report.outcome = "success";
+
+            m = bodyText.match(
+                /executed\s+(\d+)\s+Spies\s+and\s+(\d+)\s+Sentries/i
+            );
+
+            if (m) {
+                report.spies_killed = Number(m[1]);
+                report.sentries_killed = Number(m[2]);
+            }
+
+            m = bodyText.match(
+                /leaving\s+(\d+)\s+.+?\s+left/i
+            );
+
+            if (m) {
+                report.target_focus_remaining = Number(m[1]);
+            }
+
+            m = bodyText.match(
+                /steal\s+([\d,]+)\s+Gold/i
+            );
+
+            if (m) {
+                report.spoils_gold = Number(
+                    m[1].replace(/,/g, "")
+                );
+            }
+
+            m = bodyText.match(
+                /gained\s+([\d,]+)\s+Experience/i
+            );
+
+            if (m) {
+                report.spoils_xp = Number(
+                    m[1].replace(/,/g, "")
+                );
+            }
+        }
+
+
+        // =========================
+        // FAILURE
+        // =========================
+        else if (/You lose/i.test(bodyText)) {
+
+            report.outcome = "fail";
+
+            m = bodyText.match(
+                /(\d+)\s+are caught,\s*interrogated,\s*and executed/i
+            );
+
+            if (m) {
+                report.spies_lost = Number(m[1]);
+            }
+
+            const ul = document.querySelector("ul");
+
+            if (ul) {
+                report.lose = [
+                    ...ul.querySelectorAll("li")
+                ].map(li =>
+                    li.textContent.trim()
+                );
+            }
+        }
+
+
+        // =========================
+        // STORE REPORT
+        // =========================
+        if (report.target_id && report.logid) {
+
+            let allReports = {};
+
+            try {
+                allReports =
+                    JSON.parse(
+                        localStorage.getItem(STORAGE_KEY)
+                    ) || {};
+            }
+            catch (e) {
+                console.warn(
+                    "[SAB TRACKER] Invalid stored data, resetting.",
+                    e
+                );
+
+                allReports = {};
+            }
+
+            if (!allReports[report.target_id]) {
+                allReports[report.target_id] = {};
+            }
+
+            allReports[report.target_id][report.logid] = report;
+
+            localStorage.setItem(
+                STORAGE_KEY,
+                JSON.stringify(allReports)
+            );
+        }
+
+        console.log("[INTEL REPORT]", report);
+    }
+
+
+    // =========================
+    // VIEWER
+    // =========================
+
+    function createViewer() {
+
+        if (document.getElementById("koc-sab-viewer-button")) {
+            return;
+        }
+
+        // =========================
+        // BUTTON
+        // =========================
+
+        const button = document.createElement("button");
+
+        button.id = "koc-sab-viewer-button";
+        button.textContent = "SAB DATA";
+
+        Object.assign(button.style, {
+            position: "fixed",
+            top: "10px",
+            right: "10px",
+            zIndex: "999999",
+            background: "#111",
+            color: "#ddd",
+            border: "1px solid #444",
+            padding: "8px 12px",
+            cursor: "pointer",
+            fontSize: "12px"
+        });
+
+        document.body.appendChild(button);
+
+
+        // =========================
+        // OVERLAY
+        // =========================
+
+        const overlay = document.createElement("div");
+
+        overlay.id = "koc-sab-overlay";
+
+        Object.assign(overlay.style, {
+            position: "fixed",
+            inset: "0",
+            zIndex: "999998",
+            background: "rgba(0, 0, 0, 0.92)",
+            display: "none",
+            overflow: "auto",
+            padding: "30px",
+            boxSizing: "border-box"
+        });
+
+
+        // =========================
+        // PANEL
+        // =========================
+
+        const panel = document.createElement("div");
+
+        Object.assign(panel.style, {
+            maxWidth: "1200px",
+            margin: "0 auto",
+            background: "#111",
+            color: "#ddd",
+            border: "1px solid #333",
+            padding: "20px",
+            boxSizing: "border-box",
+            minHeight: "300px"
+        });
+
+        overlay.appendChild(panel);
+        document.body.appendChild(overlay);
+
+
+        // =========================
+        // STYLES
+        // =========================
+
+        const style = document.createElement("style");
+
+        style.textContent = `
+            #koc-sab-overlay,
+            #koc-sab-overlay * {
+                font-family: Arial, sans-serif;
+            }
+
+            .sab-header {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 15px;
+                margin-bottom: 15px;
+                border-bottom: 1px solid #333;
+                padding-bottom: 12px;
+            }
+
+            .sab-title {
+                font-size: 20px;
+                font-weight: bold;
+                color: #eee;
+            }
+
+            .sab-header-buttons {
+                display: flex;
+                gap: 8px;
+            }
+
+            .sab-header-buttons button {
+                background: #222;
+                color: #ddd;
+                border: 1px solid #444;
+                padding: 7px 12px;
+                cursor: pointer;
+                font-size: 12px;
+            }
+
+            .sab-header-buttons button:hover {
+                background: #333;
+                border-color: #666;
+            }
+
+            #sab-clear:hover {
+                border-color: #8a4444;
+                color: #ff9999;
+            }
+
+            .sab-close {
+                background: #222;
+                color: #aaa;
+                border: 1px solid #444;
+                padding: 7px 12px;
+                cursor: pointer;
+                font-size: 12px;
+            }
+
+            .sab-close:hover {
+                background: #333;
+                color: #fff;
+            }
+
+            .sab-target {
+                border: 1px solid #333;
+                margin-bottom: 8px;
+                background: #151515;
+            }
+
+            .sab-target-header,
+            .sab-action-header {
+                display: flex;
+                align-items: center;
+                cursor: pointer;
+                user-select: none;
+            }
+
+            .sab-target-header {
+                padding: 10px 12px;
+                background: #1b1b1b;
+            }
+
+            .sab-target-header:hover,
+            .sab-action-header:hover {
+                background: #222;
+            }
+
+            .sab-arrow {
+                width: 20px;
+                color: #888;
+                flex-shrink: 0;
+            }
+
+            .sab-target-name {
+                font-weight: bold;
+                color: #ddd;
+            }
+
+            .sab-target-id {
+                color: #777;
+                margin-left: 8px;
+                font-size: 11px;
+            }
+
+            .sab-target-content {
+                display: none;
+                padding: 8px;
+            }
+
+            .sab-action {
+                border: 1px solid #2d2d2d;
+                margin-bottom: 6px;
+                background: #111;
+            }
+
+            .sab-action-header {
+                padding: 8px 10px;
+                background: #181818;
+            }
+
+            .sab-action-id {
+                color: #bbb;
+                font-family: monospace;
+            }
+
+            .sab-action-content {
+                display: none;
+                padding: 10px;
+            }
+
+            .sab-section {
+                margin-bottom: 15px;
+            }
+
+            .sab-section-title {
+                color: #aaa;
+                font-size: 12px;
+                text-transform: uppercase;
+                margin-bottom: 6px;
+                border-bottom: 1px solid #292929;
+                padding-bottom: 4px;
+            }
+
+            .sab-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+                gap: 6px;
+            }
+
+            .sab-field {
+                background: #181818;
+                border: 1px solid #292929;
+                padding: 7px;
+                font-size: 12px;
+            }
+
+            .sab-field-name {
+                color: #777;
+                display: block;
+                margin-bottom: 3px;
+            }
+
+            .sab-field-value {
+                color: #ddd;
+                word-break: break-word;
+            }
+
+            .sab-outcome-success {
+                color: #7fcf7f;
+            }
+
+            .sab-outcome-fail {
+                color: #cf7f7f;
+            }
+
+            .sab-json {
+                white-space: pre-wrap;
+                word-break: break-word;
+                background: #0d0d0d;
+                border: 1px solid #292929;
+                padding: 10px;
+                font-family: monospace;
+                font-size: 11px;
+                color: #aaa;
+            }
+
+            .sab-empty {
+                color: #666;
+                padding: 20px;
+                text-align: center;
+            }
+        `;
+
+        document.head.appendChild(style);
+
+
+        // =========================
+        // HEADER
+        // =========================
+
+        const header = document.createElement("div");
+
+        header.className = "sab-header";
+
+        const title = document.createElement("div");
+
+        title.className = "sab-title";
+        title.textContent = "KoC Sabotage Data";
+
+        const headerButtons = document.createElement("div");
+
+        headerButtons.className = "sab-header-buttons";
+
+
+        // Export
+        const exportButton = document.createElement("button");
+
+        exportButton.id = "sab-export";
+        exportButton.textContent = "Export Data";
+
+        // Clear
+        const clearButton = document.createElement("button");
+
+        clearButton.id = "sab-clear";
+        clearButton.textContent = "Clear Data";
+
+        // Close
+        const closeButton = document.createElement("button");
+
+        closeButton.className = "sab-close";
+        closeButton.textContent = "Close";
+
+
+        headerButtons.appendChild(exportButton);
+        headerButtons.appendChild(clearButton);
+        headerButtons.appendChild(closeButton);
+
+        header.appendChild(title);
+        header.appendChild(headerButtons);
+
+        panel.appendChild(header);
+
+
+        // =========================
+        // CONTENT
+        // =========================
+
+        const content = document.createElement("div");
+
+        panel.appendChild(content);
+
+
+        // =========================
+        // RENDER
+        // =========================
+
+        function render() {
+
+            content.innerHTML = "";
+
+            let allReports = {};
+
+            try {
+                allReports =
+                    JSON.parse(
+                        localStorage.getItem(STORAGE_KEY)
+                    ) || {};
+            }
+            catch (e) {
+                console.warn(
+                    "[SAB TRACKER] Could not read stored data.",
+                    e
+                );
+
+                allReports = {};
+            }
+
+
+            const targetIds = Object.keys(allReports);
+
+            if (!targetIds.length) {
+
+                const empty = document.createElement("div");
+
+                empty.className = "sab-empty";
+                empty.textContent = "No SAB data stored.";
+
+                content.appendChild(empty);
+
+                return;
+            }
+
+
+            targetIds.forEach(targetId => {
+
+                const reports = allReports[targetId];
+
+                const target = document.createElement("div");
+
+                target.className = "sab-target";
+
+
+                // =========================
+                // TARGET HEADER
+                // =========================
+
+                const targetHeader =
+                    document.createElement("div");
+
+                targetHeader.className =
+                    "sab-target-header";
+
+
+                const targetArrow =
+                    document.createElement("span");
+
+                targetArrow.className = "sab-arrow";
+                targetArrow.textContent = "▶";
+
+
+                const targetName =
+                    document.createElement("span");
+
+                targetName.className =
+                    "sab-target-name";
+
+                const firstReport =
+                    Object.values(reports)[0];
+
+                targetName.textContent =
+                    firstReport?.target_name ||
+                    "Unknown Target";
+
+
+                const targetIdDisplay =
+                    document.createElement("span");
+
+                targetIdDisplay.className =
+                    "sab-target-id";
+
+                targetIdDisplay.textContent =
+                    `ID: ${targetId}`;
+
+
+                targetHeader.appendChild(targetArrow);
+                targetHeader.appendChild(targetName);
+                targetHeader.appendChild(targetIdDisplay);
+
+
+                // =========================
+                // TARGET CONTENT
+                // =========================
+
+                const targetContent =
+                    document.createElement("div");
+
+                targetContent.className =
+                    "sab-target-content";
+
+
+                Object.keys(reports).forEach(logid => {
+
+                    const data = reports[logid];
+
+                    const action =
+                        document.createElement("div");
+
+                    action.className = "sab-action";
+
+
+                    // =========================
+                    // ACTION HEADER
+                    // =========================
+
+                    const actionHeader =
+                        document.createElement("div");
+
+                    actionHeader.className =
+                        "sab-action-header";
+
+
+                    const actionArrow =
+                        document.createElement("span");
+
+                    actionArrow.className = "sab-arrow";
+                    actionArrow.textContent = "▶";
+
+
+                    const actionId =
+                        document.createElement("span");
+
+                    actionId.className =
+                        "sab-action-id";
+
+                    actionId.textContent =
+                        `Action ID: ${logid}`;
+
+
+                    actionHeader.appendChild(actionArrow);
+                    actionHeader.appendChild(actionId);
+
+
+                    // =========================
+                    // ACTION CONTENT
+                    // =========================
+
+                    const actionContent =
+                        document.createElement("div");
+
+                    actionContent.className =
+                        "sab-action-content";
+
+
+                    // =========================
+                    // REPORT
+                    // =========================
+
+                    const reportSection =
+                        document.createElement("div");
+
+                    reportSection.className =
+                        "sab-section";
+
+
+                    const reportTitle =
+                        document.createElement("div");
+
+                    reportTitle.className =
+                        "sab-section-title";
+
+                    reportTitle.textContent =
+                        "Report";
+
+
+                    const reportGrid =
+                        document.createElement("div");
+
+                    reportGrid.className =
+                        "sab-grid";
+
+
+                    Object.entries(data).forEach(
+                        ([key, value]) => {
+
+                            if (key === "_attack_context") {
+                                return;
+                            }
+
+                            if (value === null ||
+                                value === undefined ||
+                                value === "") {
+                                return;
+                            }
+
+                            const field =
+                                document.createElement("div");
+
+                            field.className =
+                                "sab-field";
+
+
+                            const fieldName =
+                                document.createElement("span");
+
+                            fieldName.className =
+                                "sab-field-name";
+
+                            fieldName.textContent =
+                                key;
+
+
+                            const fieldValue =
+                                document.createElement("span");
+
+                            fieldValue.className =
+                                "sab-field-value";
+
+
+                            if (key === "outcome") {
+
+                                fieldValue.className +=
+                                    data.outcome === "success"
+                                        ? " sab-outcome-success"
+                                        : " sab-outcome-fail";
+                            }
+
+
+                            if (Array.isArray(value)) {
+                                fieldValue.textContent =
+                                    value.join(" | ");
+                            }
+                            else if (
+                                typeof value === "object"
+                            ) {
+                                fieldValue.textContent =
+                                    JSON.stringify(value);
+                            }
+                            else {
+                                fieldValue.textContent =
+                                    String(value);
+                            }
+
+
+                            field.appendChild(fieldName);
+                            field.appendChild(fieldValue);
+
+                            reportGrid.appendChild(field);
+                        }
+                    );
+
+
+                    reportSection.appendChild(reportTitle);
+                    reportSection.appendChild(reportGrid);
+
+                    actionContent.appendChild(reportSection);
+
+
+                    // =========================
+                    // ATTACK CONTEXT
+                    // =========================
+
+                    if (data._attack_context) {
+
+                        const attackSection =
+                            document.createElement("div");
+
+                        attackSection.className =
+                            "sab-section";
+
+
+                        const attackTitle =
+                            document.createElement("div");
+
+                        attackTitle.className =
+                            "sab-section-title";
+
+                        attackTitle.textContent =
+                            "Attack Context";
+
+
+                        const attackGrid =
+                            document.createElement("div");
+
+                        attackGrid.className =
+                            "sab-grid";
+
+
+                        Object.entries(
+                            data._attack_context
+                        ).forEach(([key, value]) => {
+
+                            if (value === null ||
+                                value === undefined ||
+                                value === "") {
+                                return;
+                            }
+
+
+                            const field =
+                                document.createElement("div");
+
+                            field.className =
+                                "sab-field";
+
+
+                            const fieldName =
+                                document.createElement("span");
+
+                            fieldName.className =
+                                "sab-field-name";
+
+                            fieldName.textContent =
+                                key;
+
+
+                            const fieldValue =
+                                document.createElement("span");
+
+                            fieldValue.className =
+                                "sab-field-value";
+
+                            fieldValue.textContent =
+                                Array.isArray(value)
+                                    ? value.join(" | ")
+                                    : String(value);
+
+
+                            field.appendChild(fieldName);
+                            field.appendChild(fieldValue);
+
+                            attackGrid.appendChild(field);
+                        });
+
+
+                        attackSection.appendChild(
+                            attackTitle
+                        );
+
+                        attackSection.appendChild(
+                            attackGrid
+                        );
+
+                        actionContent.appendChild(
+                            attackSection
+                        );
+                    }
+
+
+                    // =========================
+                    // LOSE DETAILS
+                    // =========================
+
+                    if (
+                        Array.isArray(data.lose) &&
+                        data.lose.length
+                    ) {
+
+                        const loseSection =
+                            document.createElement("div");
+
+                        loseSection.className =
+                            "sab-section";
+
+
+                        const loseTitle =
+                            document.createElement("div");
+
+                        loseTitle.className =
+                            "sab-section-title";
+
+                        loseTitle.textContent =
+                            "Failure Details";
+
+
+                        const loseBox =
+                            document.createElement("div");
+
+                        loseBox.className =
+                            "sab-json";
+
+                        loseBox.textContent =
+                            data.lose.join("\n");
+
+
+                        loseSection.appendChild(
+                            loseTitle
+                        );
+
+                        loseSection.appendChild(
+                            loseBox
+                        );
+
+                        actionContent.appendChild(
+                            loseSection
+                        );
+                    }
+
+
+                    // =========================
+                    // ACTION TOGGLE
+                    // =========================
+
+                    actionHeader.addEventListener(
+                        "click",
+                        () => {
+
+                            const open =
+                                actionContent.style.display ===
+                                "block";
+
+                            actionContent.style.display =
+                                open ? "none" : "block";
+
+                            actionArrow.textContent =
+                                open ? "▶" : "▼";
+                        }
+                    );
+
+
+                    action.appendChild(actionHeader);
+                    action.appendChild(actionContent);
+
+                    targetContent.appendChild(action);
+                });
+
+
+                // =========================
+                // TARGET TOGGLE
+                // =========================
+
+                targetHeader.addEventListener(
+                    "click",
+                    () => {
+
+                        const open =
+                            targetContent.style.display ===
+                            "block";
+
+                        targetContent.style.display =
+                            open ? "none" : "block";
+
+                        targetArrow.textContent =
+                            open ? "▶" : "▼";
+                    }
+                );
+
+
+                target.appendChild(targetHeader);
+                target.appendChild(targetContent);
+
+                content.appendChild(target);
+            });
+        }
+
+
+        // =========================
+        // EXPORT DATA
+        // =========================
+
+        exportButton.addEventListener(
+            "click",
+            () => {
+
+                const raw =
+                    localStorage.getItem(STORAGE_KEY);
+
+                if (!raw) {
+                    alert("There is no SAB data to export.");
+                    return;
+                }
+
+
+                let data;
+
+                try {
+                    data = JSON.parse(raw);
+                }
+                catch (e) {
+                    alert(
+                        "The saved SAB data could not be exported because it is invalid."
+                    );
+
+                    return;
+                }
+
+
+                const pretty =
+                    JSON.stringify(data, null, 4);
+
+                const blob =
+                    new Blob(
+                        [pretty],
+                        {
+                            type: "application/json"
+                        }
+                    );
+
+
+                const downloadUrl =
+                    URL.createObjectURL(blob);
+
+                const link =
+                    document.createElement("a");
+
+                link.href = downloadUrl;
+                link.download =
+                    "koc_sab_reports.json";
+
+                document.body.appendChild(link);
+
+                link.click();
+
+                link.remove();
+
+                URL.revokeObjectURL(
+                    downloadUrl
+                );
+            }
+        );
+
+
+        // =========================
+        // CLEAR DATA
+        // =========================
+
+        clearButton.addEventListener(
+            "click",
+            () => {
+
+                const confirmed =
+                    confirm(
+                        "Are you sure you want to clear ALL saved SAB data?\n\nThis cannot be undone unless you have exported a backup."
+                    );
+
+                if (!confirmed) {
+                    return;
+                }
+
+
+                localStorage.removeItem(
+                    STORAGE_KEY
+                );
+
+                render();
+
+                alert(
+                    "All SAB data has been cleared."
+                );
+            }
+        );
+
+
+        // =========================
+        // CLOSE
+        // =========================
+
+        closeButton.addEventListener(
+            "click",
+            () => {
+                overlay.style.display = "none";
+            }
+        );
+
+
+        // =========================
+        // OPEN
+        // =========================
+
+        button.addEventListener(
+            "click",
+            () => {
+
+                render();
+
+                overlay.style.display = "block";
+            }
+        );
+    }
+
+
+    // =========================
+    // CREATE VIEWER
+    // =========================
+
+    createViewer();
+
+})();
