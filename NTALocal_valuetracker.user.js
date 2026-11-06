@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NTA Local Tools - Value Tracker
 // @namespace    https://www.kingsofchaos.com/
-// @version      1.1.2
+// @version      1.1.3
 // @description  Tracks and displays KoC player wealth values.
 // @match        https://www.kingsofchaos.com/*
 // @grant        GM_xmlhttpRequest
@@ -17,7 +17,7 @@
     // ==================================================
     const INSTALLED_VERSION = (typeof GM_info !== "undefined" && GM_info.script)
         ? GM_info.script.version
-        : "1.0.0";
+        : "1.1.3";
 
     const CONFIG_URL = "https://raw.githubusercontent.com/squishy01/NTA-Local-Tools/refs/heads/main/NTAlocal_config.json";
     const UPDATE_URL = "https://github.com/squishy01/NTA-Local-Tools/raw/refs/heads/main/NTALocal_valuetracker.user.js";
@@ -243,6 +243,7 @@
                 <button id="kocRefresh">Refresh List</button>
                 <button id="kocExport">Export</button>
                 <button id="kocImport">Import</button>
+                <button id="kocClear">Clear Records</button>
                 <input id="kocImportFile" type="file" accept=".json" style="display:none">
                 <select id="kocLimit">
                     <option value="10">10</option>
@@ -509,6 +510,17 @@
             };
             reader.readAsText(file);
         };
+
+        // Clear Records
+document.getElementById("kocClear").onclick = () => {
+    if (!confirm("Are you sure you want to delete ALL stored player records?")) return;
+
+    localStorage.removeItem(STORAGE_KEY);
+    page = 0;
+    render();
+
+    alert("All player records cleared.");
+};
 
         render();
     }
