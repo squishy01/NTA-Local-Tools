@@ -2,7 +2,7 @@
 	"era": [23, 23],
 	
 	"version": {
-		"value_tracker": "1.1.1",
+		"value_tracker": "1.1.2",
 		"message_helper": "1.1.0"
 		"sab_data": "1.3.0"
 	}
