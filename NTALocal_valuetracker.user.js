@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NTA Local Tools - Value Tracker
 // @namespace    https://www.kingsofchaos.com/
-// @version      1.1.1
+// @version      1.1.2
 // @description  Tracks and displays KoC player wealth values.
 // @match        https://www.kingsofchaos.com/*
 // @grant        GM_xmlhttpRequest
@@ -54,7 +54,7 @@
     function formatElapsed(timestamp) {
         if (!timestamp) return "";
 
-        const stored = new Date(timestamp.replace(" ", "T"));
+        const stored = new Date(timestamp.replace(" ", "T") + "Z");
         const now = new Date();
         let seconds = Math.floor((now - stored) / 1000);
 
@@ -215,6 +215,9 @@
 
     function openViewer() {
         if (document.getElementById("kocViewer")) return;
+
+        const mainBtn = document.getElementById("kocViewerBtn");
+        if (mainBtn) mainBtn.style.display = "none";
 
         let settings = getStoredData(SETTINGS_KEY);
 
@@ -418,6 +421,7 @@
         function closeViewer() {
             overlay.remove();
             style.remove();
+            if (mainBtn) mainBtn.style.display = "block";
         }
 
         document.getElementById("kocClose").onclick = closeViewer;
